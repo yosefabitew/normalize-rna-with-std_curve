@@ -1,0 +1,206 @@
+---
+title: "molecular-counts_2.0"
+format: html
+editor: visual
+---
+
+```{r}
+setwd("Z:/FBNProjectGroups/I3-NGS-PFOWL/Abitew/Exp_3")
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(writexl)
+```
+
+```{r}
+##The Loop 
+calculate_molecule_counts <- function(ct_values, standard_curves) {
+  results <- list()
+  
+  # Loop through each gene
+  for (gene in unique(standard_curves$gene)) {
+    # Filter the standard curve data for the current gene
+    
+    curve_data <- standard_curves %>% filter(gene == !!gene)
+    curve_data <- curve_data[6:7,]
+    
+    # Fit the standard curve (linear regression: Ct ~ log10(molecule))
+    fit <- lm(ct ~ `log10(molecule)`, data = curve_data, na.action = na.omit)
+    
+    # Extract coefficients
+    a <- coef(fit)["`log10(molecule)`"]  # Ensure the key matches column name
+    b <- coef(fit)["(Intercept)"]
+  
+    # Get Ct values for this gene
+    gene_ct_values <- ct_values_long %>% filter(gene == !!gene)
+     
+    # Predict molecule counts from Ct values: log10(molecule) = (Ct - b) / a
+    gene_ct_values <- gene_ct_values %>%
+      mutate(
+        log10_molecule = (ct - b) / a,
+        molecule = 10^log10_molecule
+      )
+    
+    # Add the gene name to results
+    results[[gene]] <- gene_ct_values
+  }
+  
+  # Combine all results into a single data frame
+  bind_rows(results)
+}
+```
+
+```{r}
+##standard standard curve
+
+standard_curve_files <- c(
+  "Ct-Werte sortiert Chip 1.xlsx",
+  "Ct-Werte sortiert Chip 2.xlsx",
+  "Ct-Werte sortiert Chip 3.xlsx",
+  "Ct-Werte sortiert Chip 4.xlsx",
+  "Ct-Werte sortiert Chip 5.xlsx"
+)
+
+# Function to read and process standard curves
+read_standard_curve <- function(file) {
+  # Identify the chip number from the file name
+  chip_number <- gsub(".*Chip (\\d).*", "\\1", file)
+  
+  read_excel(file, sheet = "Sheet2") %>%
+    pivot_longer(cols = -c(`concentration`, `log10(molecule)`), 
+                 names_to = "gene", 
+                 values_to = "ct") %>%
+    filter(
+      ct != 999,  # Exclude 999 values
+      # For Chips 2 and 3: Include only 10*7 and 10*8
+      if (chip_number %in% c("2", "3")) `log10(molecule)` %in% c("7", "8") else `log10(molecule)` != "2"
+    ) %>%
+    mutate(ct = ifelse(ct == 999, NA, ct))
+}
+
+# Combine all standard curves into one data frame
+all_standard_curves <- lapply(standard_curve_files, read_standard_curve) %>%
+  bind_rows()
+
+# Calculate the geometric mean for each gene and `log10(molecule)`
+unified_standard_curve <- all_standard_curves %>%
+  group_by(gene, `log10(molecule)`) %>%
+  summarise(
+    geometric_mean_ct = exp(mean(log(ct), na.rm = TRUE)),  # Calculate geometric mean
+    stdev = exp(sd(ct, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  rename(ct = geometric_mean_ct)  # Rename for compatibility
+
+# Save the unified standard curve for verification (optional)
+write_xlsx(unified_standard_curve, "unified_standard_curve_filtered_special_case.xlsx")
+
+```
+
+```{r}
+
+# List of files with Ct values for all chips
+ct_value_files <- c(
+  "Ct-Werte sortiert Chip 1.xlsx",
+  "Ct-Werte sortiert Chip 2.xlsx",
+  "Ct-Werte sortiert Chip 3.xlsx",
+  "Ct-Werte sortiert Chip 4.xlsx",
+  "Ct-Werte sortiert Chip 5.xlsx"
+)
+
+# Unified standard curve (already calculated earlier)
+
+#unified_standard_curve <- unified_standard_curve  # Ensure this is the calculated curve
+
+# Function to read and reshape Ct values from each file
+read_ct_values <- function(file) {
+  read_excel(file, sheet = "Sheet1") %>%
+    pivot_longer(cols = -Sample, names_to = "gene", values_to = "ct")
+}
+
+# Function to calculate molecule counts using the unified standard curve
+calculate_molecule_counts <- function(ct_values, unified_curve, chip_number) {
+  results <- list()
+  
+  for (gene in unique(unified_curve$gene)) {
+    curve_data <- unified_curve %>% filter(gene == !!gene)
+    
+    # Fit the standard curve (linear regression: Ct ~ log10(molecule))
+    fit <- lm(ct ~ `log10(molecule)`, data = curve_data, na.action = na.omit)
+    
+    # Extract coefficients
+    a <- coef(fit)["`log10(molecule)`"]
+    b <- coef(fit)["(Intercept)"]
+    
+    # Get Ct values for this gene
+    gene_ct_values <- ct_values %>% filter(gene == !!gene)
+    
+    # Predict molecule counts from Ct values
+    gene_ct_values <- gene_ct_values %>%
+      mutate(
+        log10_molecule = (ct - b) / a,
+        molecule = 10^log10_molecule
+      )
+    
+    results[[gene]] <- gene_ct_values
+  }
+  
+  # Combine results and add chip identifier
+  bind_rows(results) %>% mutate(chip = chip_number)
+}
+
+# Loop through each chip's Ct values, calculate molecule counts, and save results
+for (file in ct_value_files) {
+  # Extract chip number from file name
+  chip_number <- gsub(".*Chip (\\d).*", "\\1", file)
+  
+  # Load and reshape Ct values for the current chip
+  ct_values <- read_ct_values(file)
+  
+  # Calculate molecule counts using the unified standard curve
+  molecule_counts <- calculate_molecule_counts(ct_values, unified_standard_curve, chip_number)
+  
+  # Save results to a separate Excel file
+  output_path <- paste0("molecule_counts_Chip_", chip_number, ".xlsx")
+  write_xlsx(molecule_counts, output_path)
+  
+  cat(paste("Results for Chip", chip_number, "saved to", output_path, "\n"))
+}
+
+```
+
+```{r}
+# Calculate R^2 for each gene in the unified_standard_curve
+calculate_r_squared <- function(data) {
+  results <- list()
+  
+  for (gene in unique(data$gene)) {
+    curve_data <- data %>% filter(gene == !!gene)
+    
+    # Fit the linear model: Ct ~ log10(molecule)
+    fit <- lm(ct ~ `log10(molecule)`, data = curve_data, na.action = na.omit)
+    
+    # Extract the R-squared value from the model summary
+    r_squared <- summary(fit)$r.squared
+    
+    # Store results in a data frame
+    results[[gene]] <- data.frame(
+      gene = gene,
+      r_squared = r_squared
+    )
+  }
+  
+  # Combine results into a single data frame
+  bind_rows(results)
+}
+
+# Apply the function to the unified_standard_curve
+r_squared_results <- calculate_r_squared(unified_standard_curve)
+
+# View R-squared results
+print(r_squared_results)
+
+# Save results to an Excel file (optional)
+write_xlsx(r_squared_results, "r_squared_unified_standard_curve.xlsx")
+
+```
