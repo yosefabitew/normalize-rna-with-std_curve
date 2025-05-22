@@ -1,7 +1,10 @@
 project:
   type: website
-  output-dir: _site      # ← move it here
+  output-dir: _site
+
+execute:
+  eval: false       # ← disable *all* code execution
 
 website:
   title: "My Quarto Site"
-  # any other website-specific options…
+  # …any other website settings…
