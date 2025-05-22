@@ -1,0 +1,30 @@
+name: Render and deploy Quarto site
+
+on:
+  push:
+    branches:
+      - main      # or your default branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup-quarto@v2
+        with:
+          version: '1.3.359'   # or “latest”
+
+      - name: Render site
+        run: quarto render --no-preview
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: _site   # default Quarto output folder
+          # if you’d rather render into "docs/" on main, set publish_dir: docs
+
