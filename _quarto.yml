@@ -1,6 +1,7 @@
 project:
   type: website
+  output-dir: _site      # ← move it here
 
 website:
   title: "My Quarto Site"
-  output-dir: _site
+  # any other website-specific options…
